@@ -29,9 +29,6 @@
 from lxml import etree
 
 KCAnalyzer = None
-fullreport = "/kca_full_report_"
-problemsreport = "/kca_problems_report_"
-log = "/isafw_kcalog"
 
 class ISA_KernelChecker():    
     initialized = False
@@ -54,8 +51,9 @@ class ISA_KernelChecker():
                        'CONFIG_ARCH_BINFMT_ELF_RANDOMIZE_PIE'           : 'not set',
                        'CONFIG_DEBUG_KERNEL'                            : 'not set',
                        'CONFIG_DEBUG_FS'                                : 'not set',
-                       'CONFIG_MODULE_SIG_FORCE'                        : 'not set'
-                     }
+                       'CONFIG_MODULE_SIG_FORCE'                        : 'not set',
+                       'CONFIG_X86_INTEL_MPX'                           : 'not set'                     
+    }
 
     hardening_kco_ref={'CONFIG_CC_STACKPROTECTOR'                       : 'y', 
                        'CONFIG_DEFAULT_MMAP_MIN_ADDR'                   : '65536', # x86 specific
@@ -75,7 +73,8 @@ class ISA_KernelChecker():
                        'CONFIG_ARCH_BINFMT_ELF_RANDOMIZE_PIE'           : 'y',
                        'CONFIG_DEBUG_KERNEL'                            : 'not set',
                        'CONFIG_DEBUG_FS'                                : 'not set',
-                       'CONFIG_MODULE_SIG_FORCE'                        : 'y'
+                       'CONFIG_MODULE_SIG_FORCE'                        : 'y',
+                       'CONFIG_X86_INTEL_MPX'                           : 'y'   # x86 and certain HW variants specific                  
                      }
 
     keys_kco =       { 'CONFIG_KEYS'                                    : 'not set',
@@ -153,18 +152,19 @@ class ISA_KernelChecker():
 
     def __init__(self, ISA_config):
         self.proxy = ISA_config.proxy
-        self.reportdir = ISA_config.reportdir
-        self.logdir = ISA_config.logdir
-        self.timestamp = ISA_config.timestamp
+        self.logfile = ISA_config.logdir + "/isafw_kcalog"
+        self.full_report_name = ISA_config.reportdir + "/kca_full_report_" + ISA_config.machine + "_" + ISA_config.timestamp
+        self.problems_report_name = ISA_config.reportdir + "/kca_problems_report_" + ISA_config.machine + "_" + ISA_config.timestamp
+        self.full_reports = ISA_config.full_reports
         self.initialized = True
         print("Plugin ISA_KernelChecker initialized!")
-        with open(self.logdir + log, 'w') as flog:
+        with open(self.logfile, 'w') as flog:
             flog.write("\nPlugin ISA_KernelChecker initialized!\n")
 
     def process_kernel(self, ISA_kernel):
         if (self.initialized == True):
             if (ISA_kernel.img_name and ISA_kernel.path_to_config):
-                with open(self.logdir + log, 'a') as flog:
+                with open(self.logfile, 'a') as flog:
                     flog.write("Analyzing kernel config file at: " + ISA_kernel.path_to_config +
                                " for the image: " + ISA_kernel.img_name + "\n")
                 with open(ISA_kernel.path_to_config, 'r') as fkernel_conf:
@@ -182,39 +182,43 @@ class ISA_KernelChecker():
                         for key in self.integrity_kco:
                             if key +'=' in line:
                                 self.integrity_kco[key] = line.split('=')[1]
-                with open(self.logdir + log, 'a') as flog:
+                with open(self.logfile, 'a') as flog:
                     flog.write("\n\nhardening_kco values: " + str(self.hardening_kco))
                     flog.write("\n\nkeys_kco values: " + str(self.keys_kco))              
                     flog.write("\n\nsecurity_kco values: " + str(self.security_kco))              
-                    flog.write("\n\nintegrity_kco values: " + str(self.integrity_kco))                    
-                with open(self.reportdir + fullreport + ISA_kernel.img_name + "_" + self.timestamp, 'w') as freport:
-                    freport.write("Report for image: " + ISA_kernel.img_name + '\n')
-                    freport.write("With the kernel conf at: " + ISA_kernel.path_to_config + '\n\n')
-                    freport.write("Hardening options:\n")
-                    for key in sorted(self.hardening_kco):
-                        freport.write(key + ' : ' + str(self.hardening_kco[key]) + '\n')
-                    freport.write("\nKey-related options:\n")
-                    for key in sorted(self.keys_kco):
-                        freport.write(key + ' : ' + str(self.keys_kco[key]) + '\n')
-                    freport.write("\nSecurity options:\n")
-                    for key in sorted(self.security_kco):
-                        freport.write(key + ' : ' + str(self.security_kco[key]) + '\n')
-                    freport.write("\nIntegrity options:\n")
-                    for key in sorted(self.integrity_kco):
-                        freport.write(key + ' : ' + str(self.integrity_kco[key]) + '\n')
+                    flog.write("\n\nintegrity_kco values: " + str(self.integrity_kco))
+                self.write_full_report(ISA_kernel)
                 self.write_problems_report(ISA_kernel)
 
             else:
                 print("Mandatory arguments such as image name and path to config are not provided!")
                 print("Not performing the call.")
-                with open(self.logdir + log, 'a') as flog:
+                with open(self.logfile, 'a') as flog:
                     flog.write("Mandatory arguments such as image name and path to config are not provided!\n")
                     flog.write("Not performing the call.\n")
         else:
             print("Plugin hasn't initialized! Not performing the call.")    
 
+    def write_full_report(self, ISA_kernel):
+        if self.full_reports :      
+            with open(self.full_report_name + "_" + ISA_kernel.img_name, 'w') as freport:
+                freport.write("Report for image: " + ISA_kernel.img_name + '\n')
+                freport.write("With the kernel conf at: " + ISA_kernel.path_to_config + '\n\n')
+                freport.write("Hardening options:\n")
+                for key in sorted(self.hardening_kco):
+                    freport.write(key + ' : ' + str(self.hardening_kco[key]) + '\n')
+                freport.write("\nKey-related options:\n")
+                for key in sorted(self.keys_kco):
+                    freport.write(key + ' : ' + str(self.keys_kco[key]) + '\n')
+                freport.write("\nSecurity options:\n")
+                for key in sorted(self.security_kco):
+                    freport.write(key + ' : ' + str(self.security_kco[key]) + '\n')
+                freport.write("\nIntegrity options:\n")
+                for key in sorted(self.integrity_kco):
+                    freport.write(key + ' : ' + str(self.integrity_kco[key]) + '\n')
+
     def write_problems_report(self, ISA_kernel):
-        with open(self.reportdir + problemsreport + ISA_kernel.img_name + "_" + self.timestamp, 'w') as freport:
+        with open(self.problems_report_name + "_" + ISA_kernel.img_name, 'w') as freport:
             freport.write("Report for image: " + ISA_kernel.img_name + '\n')
             freport.write("With the kernel conf at: " + ISA_kernel.path_to_config + '\n\n')
             freport.write("Hardening options that need improvement:\n")
@@ -283,12 +287,12 @@ class ISA_KernelChecker():
                         freport.write("Recommended value:\n")
                         freport.write(key + ' : ' + str(self.integrity_kco_ref[key]) + '\n')
         # write_problems_report_xml 
-        root = etree.Element('testsuite', name = 'KCA_Plugin', tests='4')
-        tcase1 = etree.SubElement(root, 'testcase', classname ='ISA_KernelChecker', name = 'Hardening_options_that_need_improvement')
-        failrs1 = etree.SubElement(tcase1, 'failure', msg = 'Non-compliant kernel settings found', type = 'violation')
+        numTests = len(self.hardening_kco) + len(self.keys_kco) + len(self.security_kco) + len(self.integrity_kco)
+        root = etree.Element('testsuite', name = 'KCA_Plugin', tests=str(numTests))
         for key in sorted(self.hardening_kco) :
+            tcase1 = etree.SubElement(root, 'testcase', classname ='Hardening options', name = key)
             if (self.hardening_kco[key] != self.hardening_kco_ref[key]) :
-                valid == False
+                valid = False
                 if (key == "CONFIG_DEBUG_STRICT_USER_COPY_CHECKS") :
                     if (self.hardening_kco['CONFIG_ARCH_HAS_DEBUG_STRICT_USER_COPY_CHECKS'] == 'y'):
                         valid = True
@@ -299,17 +303,15 @@ class ISA_KernelChecker():
                             valid = True
                             break
                 if valid == False:
-                    msg1 = 'current="' + key + ':' + str(self.hardening_kco[key]) + '"' + ' recommended="' + key + ':' + str(self.hardening_kco_ref[key] + '"') 
-                    value1 = etree.SubElement(failrs1, 'value').text = msg1
-        tcase2 = etree.SubElement(root, 'testcase', classname = 'ISA_KernelChecker', name = 'Key-related_options_that_need_improvement')
-        failrs2 = etree.SubElement(tcase2, 'failure', msg = 'Non-compliant kernel settings found', type = 'violation')
+                    msg1 = 'current=' + key + ' is ' + str(self.hardening_kco[key]) + ', recommended=' + key + ' is ' + str(self.hardening_kco_ref[key]) 
+                    failrs1 = etree.SubElement(tcase1, 'failure', message = msg1, type = 'violation')
         for key in sorted(self.keys_kco):
+            tcase2 = etree.SubElement(root, 'testcase', classname = 'Key-related options', name = key)
             if (self.keys_kco[key] != self.keys_kco_ref[key]) :               
-                msg2 = 'current="' + key + ':' + str(self.keys_kco[key] + '"' + ' recommended="' + key + ':' + str(self.keys_kco_ref[key] + '"')) 
-                value2 = etree.SubElement(failrs2, 'value').text= msg2
-        tcase3 = etree.SubElement(root, 'testcase', classname = 'ISA_KernelChecker', name = 'Security_options_that_need_improvement')
-        failrs3 = etree.SubElement(tcase3, 'failure', msg = 'Non-compliant kernel settings found', type ='violation')
+                msg2 = 'current=' + key + ' is ' + str(self.keys_kco[key] + ', recommended=' + key + ' is ' + str(self.keys_kco_ref[key])) 
+                failrs2 = etree.SubElement(tcase2, 'failure', message = msg2, type = 'violation')
         for key in sorted(self.security_kco):
+            tcase3 = etree.SubElement(root, 'testcase', classname = 'Security options', name = key)
             if (self.security_kco[key] != self.security_kco_ref[key]) :
                 valid = False
                 if (key == "CONFIG_DEFAULT_SECURITY"):
@@ -328,11 +330,10 @@ class ISA_KernelChecker():
                         (self.security_kco['CONFIG_SECURITY_TOMOYO'] == 'y')):
                         valid = True
                 if valid == False:
-                    msg3 = 'current="' + key + ':' + str(self.security_kco[key]) + '"' + ' recommended="' + key + ':' + str(self.security_kco_ref[key] + '"')
-                    value3 = etree.SubElement(failrs3, 'value').text = msg3
-        tcase4 = etree.SubElement(root, 'testcase', classname = 'ISA_KernelChecker', name = 'Integrity_options_that_need_improvement')
-        failrs4 = etree.SubElement(tcase4, 'failure', msg = 'Non-compliant kernel settings found', type='violation')
+                    msg3 = 'current=' + key + ' is ' + str(self.security_kco[key]) + ', recommended=' + key + ' is ' + str(self.security_kco_ref[key])
+                    failrs3 = etree.SubElement(tcase3, 'failure', message = msg3, type ='violation')
         for key in sorted(self.integrity_kco):
+            tcase4 = etree.SubElement(root, 'testcase', classname = 'Integrity options', name = key)
             if (self.integrity_kco[key] != self.integrity_kco_ref[key]) :
                 valid = False
                 if ((key == "CONFIG_IMA_DEFAULT_HASH_SHA1") or 
@@ -343,11 +344,10 @@ class ISA_KernelChecker():
                         (self.integrity_kco['CONFIG_IMA_DEFAULT_HASH_SHA512'] == 'y')):
                         valid = True
                 if valid == False :
-                    msg4 = 'current="' + key + ':' + str(self.integrity_kco[key]) + '"' + ' recommended="' + key + ':' + str(self.integrity_kco_ref[key] + '"')
-                    value4 = etree.SubElement(failrs4, 'value').text = msg4
-        print (etree.tostring(root, pretty_print = True))
+                    msg4 = 'current=' + key + ' is ' + str(self.integrity_kco[key]) + ', recommended=' + key + ' is ' + str(self.integrity_kco_ref[key])
+                    failrs4 = etree.SubElement(tcase4, 'failure', message = msg4, type='violation')
         tree = etree.ElementTree(root)
-        output = self.reportdir + problemsreport + ISA_kernel.img_name + "_" + self.timestamp + '.xml' 
+        output = self.problems_report_name + "_" + ISA_kernel.img_name + '.xml' 
         tree.write(output, encoding = 'UTF-8', pretty_print = True, xml_declaration = True)
 
 #======== supported callbacks from ISA =============#

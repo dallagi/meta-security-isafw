@@ -35,9 +35,6 @@ from re import sub
 from lxml import etree
 
 CFChecker = None
-full_report = "/cfa_full_report_"
-problems_report = "/cfa_problems_report_"
-log = "/isafw_cfalog"
 
 class ISA_CFChecker():    
     initialized = False
@@ -45,36 +42,50 @@ class ISA_CFChecker():
     no_canary = []
     no_pie = []
     no_nx = []
+    execstack = []
+    execstack_not_defined = []
+    nodrop_groups = []
+    no_mpx = []
 
     def __init__(self, ISA_config):
         self.proxy = ISA_config.proxy
-        self.reportdir = ISA_config.reportdir
-        self.logdir = ISA_config.logdir
-        self.timestamp = ISA_config.timestamp
+        self.logfile = ISA_config.logdir + "/isafw_cfalog"
+        self.full_report_name = ISA_config.reportdir + "/cfa_full_report_" + ISA_config.machine + "_" + ISA_config.timestamp
+        self.problems_report_name = ISA_config.reportdir + "/cfa_problems_report_" + ISA_config.machine + "_" + ISA_config.timestamp
+        self.full_reports = ISA_config.full_reports
         # check that checksec is installed
         rc = subprocess.call(["which", "checksec.sh"])
         if rc == 0:
-            self.initialized = True
-            print("Plugin ISA_CFChecker initialized!")
-            with open(self.logdir + log, 'w') as flog:
-                flog.write("\nPlugin ISA_CFChecker initialized!\n")
-        else:
-            print("checksec tool is missing!")
-            print("Please install it from http://www.trapkit.de/tools/checksec.html")
-            with open(self.logdir + log, 'w') as flog:
-                flog.write("checksec tool is missing!\n")
-                flog.write("Please install it from http://www.trapkit.de/tools/checksec.html\n")
+            # check that execstack is installed
+            rc = subprocess.call(["which", "execstack"])
+            if rc == 0:
+                # check that execstack is installed
+                rc = subprocess.call(["which", "readelf"])
+                if rc == 0:
+                    self.initialized = True
+                    print("Plugin ISA_CFChecker initialized!")
+                    with open(self.logfile, 'w') as flog:
+                        flog.write("\nPlugin ISA_CFChecker initialized!\n")
+                    return
+        print("checksec, execstack or readelf tools are missing!")
+        print("Please install checksec from http://www.trapkit.de/tools/checksec.html")
+        print("Please install execstack from prelink package")
+        with open(self.logfile, 'w') as flog:
+            flog.write("checksec, execstack or readelf tools are missing!\n")
+            flog.write("Please install checksec from http://www.trapkit.de/tools/checksec.html\n")
+            flog.write("Please install execstack from prelink package\n")
 
     def process_filesystem(self, ISA_filesystem):
         if (self.initialized == True):
             if (ISA_filesystem.img_name and ISA_filesystem.path_to_fs):
-                with open(self.logdir + log, 'a') as flog:
+                with open(self.logfile, 'a') as flog:
                     flog.write("\n\nFilesystem path is: " + ISA_filesystem.path_to_fs)
-                with open(self.reportdir + full_report + ISA_filesystem.img_name + "_" + self.timestamp, 'w') as ffull_report:
-                    ffull_report.write("Security-relevant flags for executables for image: " + ISA_filesystem.img_name + '\n')
-                    ffull_report.write("With rootfs location at " +  ISA_filesystem.path_to_fs + "\n\n")
+                if self.full_reports :
+                    with open(self.full_report_name + "_" + ISA_filesystem.img_name, 'w') as ffull_report:
+                        ffull_report.write("Security-relevant flags for executables for image: " + ISA_filesystem.img_name + '\n')
+                        ffull_report.write("With rootfs location at " +  ISA_filesystem.path_to_fs + "\n\n")
                 self.files = self.find_files(ISA_filesystem.path_to_fs)
-                with open(self.logdir + log, 'a') as flog:
+                with open(self.logfile, 'a') as flog:
                     flog.write("\n\nFile list is: " + str(self.files))
                 self.process_files(ISA_filesystem.img_name, ISA_filesystem.path_to_fs)
                 self.write_report(ISA_filesystem)
@@ -82,16 +93,16 @@ class ISA_CFChecker():
             else:
                 print("Mandatory arguments such as image name and path to the filesystem are not provided!")
                 print("Not performing the call.")
-                with open(self.logdir + log, 'a') as flog:
+                with open(self.logfile, 'a') as flog:
                     flog.write("Mandatory arguments such as image name and path to the filesystem are not provided!\n")
                     flog.write("Not performing the call.\n")
         else:
             print("Plugin hasn't initialized! Not performing the call.")
-            with open(self.logdir + log, 'a') as flog:
+            with open(self.logfile, 'a') as flog:
                 flog.write("Plugin hasn't initialized! Not performing the call.\n")
 
     def write_report(self, ISA_filesystem):
-        with open(self.reportdir + problems_report + ISA_filesystem.img_name + "_" + self.timestamp, 'w') as fproblems_report:
+        with open(self.problems_report_name + "_" + ISA_filesystem.img_name, 'w') as fproblems_report:
             fproblems_report.write("Report for image: " + ISA_filesystem.img_name + '\n')
             fproblems_report.write("With rootfs location at " + ISA_filesystem.path_to_fs + "\n\n")
             fproblems_report.write("Files with no RELO:\n")
@@ -110,36 +121,68 @@ class ISA_CFChecker():
             for item in self.no_nx:
                 item = item.replace(ISA_filesystem.path_to_fs, "")
                 fproblems_report.write(item + '\n')
+            fproblems_report.write("\n\nFiles with executable stack enabled:\n")
+            for item in self.execstack:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                fproblems_report.write(item + '\n')
+            fproblems_report.write("\n\nFiles with no ability to fetch executable stack status:\n")
+            for item in self.execstack_not_defined:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                fproblems_report.write(item + '\n')
+            fproblems_report.write("\n\nFiles that don't initialize groups while using setuid/setgid:\n")
+            for item in self.nodrop_groups:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                fproblems_report.write(item + '\n')
+            fproblems_report.write("\n\nFiles that don't have MPX protection enabled:\n")
+            for item in self.no_mpx:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                fproblems_report.write(item + '\n')
 
     def write_report_xml(self, ISA_filesystem):
-        root = etree.Element('testsuite', name='CFA_Plugin', tests='4')
-        tcase1 = etree.SubElement(root, 'testcase', classname='ISA_CFChecker', name='files_with_no_RELO')
+        numTests = len(self.no_relo) + len(self.no_canary) + len(self.no_pie) + len(self.no_nx) + len(self.execstack) + len(self.execstack_not_defined) + len(self.nodrop_groups) + len(self.no_mpx) 
+        root = etree.Element('testsuite', name='ISA_CFChecker', tests=str(numTests))
         if self.no_relo:
-            failrs1 = etree.SubElement(tcase1, 'failure', msg='Non-compliant files found', type='violation')
             for item in self.no_relo:
                 item = item.replace(ISA_filesystem.path_to_fs, "")
-                etree.SubElement(failrs1, 'value').text = item
-        tcase2 = etree.SubElement(root, 'testcase', classname='ISA_CFChecker', name='files_with_no_canary')
+                tcase1 = etree.SubElement(root, 'testcase', classname='files_with_no_RELO', name=item)
+                etree.SubElement(tcase1, 'failure', message=item, type='violation')
         if self.no_canary: 
-            failrs2 = etree.SubElement(tcase2, 'failure', msg='Non-compliant files found', type='violation')
             for item in self.no_canary:
                 item = item.replace(ISA_filesystem.path_to_fs, "")
-                etree.SubElement(failrs2, 'value').text = item
-        tcase3 = etree.SubElement(root, 'testcase', classname='ISA_CFChecker', name='files_with_no_PIE')
+                tcase2 = etree.SubElement(root, 'testcase', classname='files_with_no_canary', name=item)
+                etree.SubElement(tcase2, 'failure', message=item, type='violation')
         if self.no_pie: 
-            failrs3 = etree.SubElement(tcase3, 'failure', msg='Non-compliant files found', type='violation')
             for item in self.no_pie:
                 item = item.replace(ISA_filesystem.path_to_fs, "")
-                etree.SubElement(failrs3, 'value').text = item                    
-        tcase4 = etree.SubElement(root, 'testcase', classname='ISA_CFChecker', name='files_with_no_NX')
+                tcase3 = etree.SubElement(root, 'testcase', classname='files_with_no_PIE', name=item)
+                etree.SubElement(tcase3, 'failure', message=item, type='violation')
         if self.no_nx: 
-            failrs4 = etree.SubElement(tcase4, 'failure', msg='Non-compliant files found', type='violation')
             for item in self.no_nx:
                 item = item.replace(ISA_filesystem.path_to_fs, "")
-                etree.SubElement(failrs4, 'value').text = item
-        print (etree.tostring(root, pretty_print=True))
+                tcase4 = etree.SubElement(root, 'testcase', classname='files_with_no_NX', name=item)
+                etree.SubElement(tcase4, 'failure', message=item, type='violation')
+        if self.execstack: 
+            for item in self.execstack:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                tcase5 = etree.SubElement(root, 'testcase', classname='files_with_execstack', name=item)
+                etree.SubElement(tcase5, 'failure', message=item, type='violation')
+        if self.execstack_not_defined: 
+            for item in self.execstack_not_defined:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                tcase6 = etree.SubElement(root, 'testcase', classname='files_with_execstack_not_defined', name=item)
+                etree.SubElement(tcase6, 'failure', message=item, type='violation')
+        if self.nodrop_groups: 
+            for item in self.nodrop_groups:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                tcase7 = etree.SubElement(root, 'testcase', classname='files_with_nodrop_groups', name=item)
+                etree.SubElement(tcase7, 'failure', message=item, type='violation')
+        if self.no_mpx: 
+            for item in self.no_mpx:
+                item = item.replace(ISA_filesystem.path_to_fs, "")
+                tcase8 = etree.SubElement(root, 'testcase', classname='files_with_no_mpx', name=item)
+                etree.SubElement(tcase8, 'failure', message=item, type='violation')
         tree = etree.ElementTree(root)
-        output = self.reportdir + problems_report + ISA_filesystem.img_name + "_" + self.timestamp + '.xml' 
+        output = self.problems_report_name + "_" + ISA_filesystem.img_name + '.xml' 
         tree.write(output, encoding= 'UTF-8', pretty_print=True, xml_declaration=True)
 
     def find_files(self, init_path):
@@ -148,6 +191,43 @@ class ISA_CFChecker():
             for f in filenames:
                 list_of_files.append(str(dirpath+"/"+f)[:])
         return list_of_files
+
+    def get_execstack(self, file_name):
+        cmd = ['execstack', '-q', file_name]
+        try:
+            result = subprocess.check_output(cmd).decode("utf-8")
+        except:
+            return "Not able to fetch execstack status"
+        else:
+            if result.startswith("X "):
+                self.execstack.append(file_name[:])
+            if result.startswith("? "):
+                self.execstack_not_defined.append(file_name[:])             
+            return result
+
+    def get_nodrop_groups(self, file_name):
+        cmd = ['readelf', '-s', file_name]
+        try:
+            result = subprocess.check_output(cmd).decode("utf-8")
+        except:
+            return "Not able to fetch nodrop groups status"
+        else:
+            if ("setgid@GLIBC" in result) or ("setegid@GLIBC" in result) or ("setresgid@GLIBC" in result):
+                if ("setuid@GLIBC" in result) or ("seteuid@GLIBC" in result) or ("setresuid@GLIBC" in result):
+                    if ("setgroups@GLIBC" not in result) and ("initgroups@GLIBC" not in result):
+                        self.nodrop_groups.append(file_name[:])       
+            return result
+
+    def get_mpx(self, file_name):
+        cmd = ['objdump', '-d', file_name]
+        try:
+            result = subprocess.check_output(cmd).decode("utf-8")
+        except:
+            return "Not able to fetch mpx status"
+        else:
+            if ("bndcu" not in result) and ("bndcl" not in result) and ("bndmov" not in result):
+                self.no_mpx.append(file_name[:])       
+            return result
 
     def get_security_flags(self, file_name):
         SF = {
@@ -199,7 +279,7 @@ class ISA_CFChecker():
                     result = subprocess.check_output(cmd).decode("utf-8")
                 except:
                     print("Not able to decode mime type", sys.exc_info())
-                    with open(self.logdir + log, 'a') as flog:
+                    with open(self.logfile, 'a') as flog:
                         flog.write("Not able to decode mime type" + sys.exc_info())
                     continue
                 type = result.split()[-1]
@@ -211,7 +291,7 @@ class ISA_CFChecker():
                         result = subprocess.check_output(cmd).decode("utf-8")
                     except:
                         print("Not able to decode mime type", sys.exc_info())
-                        with open(self.logdir + log, 'a') as flog:
+                        with open(self.logfile, 'a') as flog:
                             flog.write("Not able to decode mime type" + sys.exc_info())
                         continue
                     type = result.split()[-1]
@@ -233,13 +313,20 @@ class ISA_CFChecker():
                         sec_field = "File is pdf"
                     else:
                         sec_field = self.get_security_flags(real_file)
-                        with open(self.reportdir + full_report + img_name + "_" + self.timestamp, 'a') as ffull_report:
-                            real_file = real_file.replace(path_to_fs, "")
-                            ffull_report.write(real_file + ": ")
-                            for s in sec_field:
-                                line = ' '.join(str(x) for x in s)
-                                ffull_report.write(line + ' ')
-                            ffull_report.write('\n')                            
+                        execstack = self.get_execstack(real_file)
+                        nodrop_groups = self.get_nodrop_groups(real_file)
+                        no_mpx = self.get_mpx(real_file)
+                        if self.full_reports :
+                            with open(self.full_report_name + "_" + img_name, 'a') as ffull_report:
+                                real_file = real_file.replace(path_to_fs, "")
+                                ffull_report.write(real_file + ": ")
+                                for s in sec_field:
+                                    line = ' '.join(str(x) for x in s)
+                                    ffull_report.write(line + ' ')
+                                ffull_report.write('\nexecstack: ' + execstack +' ')
+                                ffull_report.write('\nnodrop_groups: ' + nodrop_groups +' ')
+                                ffull_report.write('\nno mpx: ' + no_mpx +' ')
+                                ffull_report.write('\n')                            
                 else:
                     continue
 

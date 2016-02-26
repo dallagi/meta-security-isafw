@@ -46,7 +46,7 @@ python do_analysesource() {
         fetch.unpack(workdir, (url,))
 
     recipe = isafw.ISA_package()
-    recipe.name = d.getVar('PN', True)
+    recipe.name = d.getVar('BPN', True)
     recipe.version = d.getVar('PV', True)
     recipe.version = recipe.version.split('+git', 1)[0]
 
@@ -125,6 +125,7 @@ addtask do_process_reports after do_${PR_ORIG_TASK}
 # These tasks are intended to be called directly by the user (e.g. bitbake -c)
 
 addtask do_analyse_sources after do_analysesource
+do_analyse_sources[doc] = "Produce ISAFW reports based on given package without building it"
 do_analyse_sources[nostamp] = "1"
 do_analyse_sources[postfuncs] = "do_process_reports"
 do_analyse_sources() {
@@ -132,6 +133,7 @@ do_analyse_sources() {
 }
 
 addtask do_analyse_sources_all after do_analysesource
+do_analyse_sources_all[doc] = "Produce ISAFW reports for all packages in given target without building them"
 do_analyse_sources_all[recrdeptask] = "do_analyse_sources_all do_analysesource"
 do_analyse_sources_all[recideptask] = "do_${PR_ORIG_TASK}"
 do_analyse_sources_all[nostamp] = "1"
@@ -190,18 +192,19 @@ python analyse_image() {
 }
 
 do_rootfs[depends] += "checksec-native:do_populate_sysroot"
+do_rootfs[depends] += "prelink-native:do_populate_sysroot"
 analyse_image[fakeroot] = "1"
 
 def isafw_init(isafw, d):
     import re, errno
 
     isafw_config = isafw.ISA_config()
-
     isafw_config.proxy = d.getVar('HTTP_PROXY', True)
     if not isafw_config.proxy :
         isafw_config.proxy = d.getVar('http_proxy', True)
     bb.debug(1, 'isafw: proxy is %s' % isafw_config.proxy)
 
+    isafw_config.machine = d.getVar('MACHINE', True)
     isafw_config.timestamp = d.getVar('DATETIME', True)
     isafw_config.reportdir = d.getVar('ISAFW_REPORTDIR', True) + "_" + isafw_config.timestamp
     if not os.path.exists(os.path.dirname(isafw_config.reportdir + "/test")):
@@ -234,7 +237,8 @@ def manifest2pkglist(d):
         with open(manifest_file, 'r') as finput:
             for line in finput:
                 items = line.split()
-                foutput.write(items[0] + " " + items[2] + "\n")
+                if items and (len(items) >= 3):
+                    foutput.write(items[0] + " " + items[2] + "\n")
 
     return pkglist
 

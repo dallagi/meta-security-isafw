@@ -1,7 +1,7 @@
 import os
 import textwrap
 import subprocess
-
+import re
 try:
     import cPickle as pickle
 except ImportError:
@@ -12,12 +12,21 @@ temp_file = '/isafw_dep_tmp'
 report_file = '/dep_report'
 DEPChecker = None
 
+DEPENDENCIES_BLACKLIST = ['.*-dbg$', '.*-locale$', '.*-doc$']
+
+
+class Dependency(object):
+    def __init__(self, pkg_name, details):
+        self.pkg_name = pkg_name
+        self.details = details
+
 
 class ISA_DEPChecker:
     initialized = False
 
     def __init__(self, ISA_config):
-        self.depgraph = {}
+        self.b_depgraph = {}  # build-time dependency graph
+        self.r_depgraph = {}  # run-time dependency graph
         self.logdir = ISA_config.logdir
         self.reportdir = ISA_config.reportdir
         self.timestamp = ISA_config.timestamp
@@ -26,23 +35,61 @@ class ISA_DEPChecker:
         with open(self.logdir + log, 'a') as flog:
             flog.write("\nPlugin ISA_DEPChecker initialized!\n")
 
+    def _filter_deps(self, deps):
+        is_valid = lambda dep: not any(
+            re.match(regex, dep.pkg_name) for regex in DEPENDENCIES_BLACKLIST
+        )
+        return filter(is_valid, deps)
+
+    def _parse_rdeps(self, rdeps):
+        if ':' not in rdeps:
+            return rdeps, []
+
+        pkg, dependencies = rdeps.split(':', 1)
+
+        if not dependencies.strip():
+            return pkg, []
+
+        regex = r'((?P<name>[^\(/)\s]+)\s*(\((?P<details>[^)]*)\))?)'
+
+        return pkg, [
+            Dependency(dep.group('name'), dep.group('details'))
+            for dep in re.finditer(regex, dependencies)
+            if dep.group('name').strip().lower() != 'none'
+            ]
+
     def process_package(self, ISA_pkg):
-        b_deps = ISA_pkg.b_deps
+        b_deps = [Dependency(pkg, '') for pkg in ISA_pkg.b_deps]
+
+        r_deps = dict()
+        for deps in ISA_pkg.r_deps:
+            pkg, dependencies = self._parse_rdeps(deps)
+            r_deps.setdefault(pkg, set()).update(dependencies)
+
+        b_filtered = self._filter_deps(b_deps)
+        r_filtered = {}
+        for pkg in r_deps:
+            r_filtered[pkg] = self._filter_deps(r_deps[pkg])
 
         with open(self.reportdir + temp_file, 'a+b') as tmp:
-            obj = (ISA_pkg.name, b_deps)
-            pickle.dump(obj, tmp)
+            b_obj = ('b', ISA_pkg.name, b_filtered)
+            pickle.dump(b_obj, tmp)
+
+            for pkg in r_filtered:
+                r_obj = ('r', pkg, r_filtered[pkg])
+                pickle.dump(r_obj, tmp)
 
     def process_report(self):
         tmp = open(self.reportdir + temp_file, 'rb')
 
         while True:
             try:
-                pkg, deps = pickle.load(tmp)
+                dep_type, pkg, deps = pickle.load(tmp)
 
                 # update dependencies if node already exists in depgraph,
                 # add new empty node otherwise
-                node = self.depgraph.setdefault(pkg, set())
+                depgraph = self.b_depgraph if dep_type == 'b' else self.r_depgraph
+                node = depgraph.setdefault(pkg, set())
                 node.update(deps)
 
             except EOFError:
@@ -55,8 +102,13 @@ class ISA_DEPChecker:
         except OSError:
             pass
 
-        dot_graph = self.generate_dot()
-        report_path = self.reportdir + report_file + '_' + self.timestamp + '.dot'
+        self.generate_graph(self.b_depgraph, 'build_time')
+        self.generate_graph(self.r_depgraph, 'run_time')
+
+    def generate_graph(self, dep_graph, deps_type):
+        report_path = self.reportdir + report_file + '_' + deps_type + '_' + self.timestamp + '.dot'
+
+        dot_graph = self.generate_dot(dep_graph)
         with open(report_path, 'w') as f:
             f.write(dot_graph)
 
@@ -66,19 +118,15 @@ class ISA_DEPChecker:
             # remove transient redundancy from graph before rendering
             ps = subprocess.Popen(('tred', report_path), stdout=subprocess.PIPE)
             subprocess.call(
-                    ('dot', '-Tpng', '-o', report_path[:-3] + 'png'),
-                    stdin=ps.stdout
+                ('dot', '-Tpng', '-o', report_path[:-3] + 'png'),
+                stdin=ps.stdout
             )
             ps.wait()
         else:
             with open(self.logdir + log, 'a') as flog:
-                flog.write('Graphviz is missing, the graph will not be rendered.\n')
+                flog.write('Graphviz is missing, the graphs will not be rendered.\n')
 
-        # put dependency graph in log file. todo: remove me
-        with open(self.logdir + log, 'a') as flog:
-            flog.write(str(self.depgraph))
-
-    def generate_dot(self):
+    def generate_dot(self, digraph):
         """ Generate a digraph definition in the DOT language """
         graph_template = textwrap.dedent('''\
         digraph dependency_graph {{
@@ -89,9 +137,9 @@ class ISA_DEPChecker:
         edge_template = '\t"{a}" -> "{b}";'
 
         edges = []
-        for node, deps in self.depgraph.iteritems():
+        for node, deps in digraph.iteritems():
             for dep in deps:
-                edges.append(edge_template.format(a=node, b=dep))
+                edges.append(edge_template.format(a=node, b=dep.pkg_name))
 
         return graph_template.format(edges='\n'.join(edges))
 

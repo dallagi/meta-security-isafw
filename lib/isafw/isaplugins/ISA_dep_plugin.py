@@ -20,6 +20,12 @@ class Dependency(object):
         self.pkg_name = pkg_name
         self.details = details
 
+    def __str__(self):
+        return '{0} ({1})'.format(self.pkg_name, self.details)
+
+    def __repr__(self):
+        return self.__str__()
+
 
 class ISA_DEPChecker:
     initialized = False

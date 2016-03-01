@@ -118,7 +118,7 @@ class ISA_DEPChecker:
             # remove transient redundancy from graph before rendering
             ps = subprocess.Popen(('tred', report_path), stdout=subprocess.PIPE)
             subprocess.call(
-                ('dot', '-Tpng', '-o', report_path[:-3] + 'png'),
+                ('dot', '-Tsvg', '-o', report_path[:-3] + 'svg'),
                 stdin=ps.stdout
             )
             ps.wait()

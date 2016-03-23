@@ -85,7 +85,8 @@ class ISA_DEPChecker:
                 r_obj = ('r', pkg, r_filtered[pkg])
                 pickle.dump(r_obj, tmp)
 
-    def process_report(self):
+    def load_dep_graphs(self, remove_temp=False):
+        """ Fill self.b_depgraph and self.r_depgraph """
         tmp = open(self.reportdir + temp_file, 'rb')
 
         while True:
@@ -103,10 +104,14 @@ class ISA_DEPChecker:
 
         tmp.close()
 
-        try:  # remove temp file
-            os.remove(self.reportdir + temp_file)
-        except OSError:
-            pass
+        if remove_temp:
+            try:
+                os.remove(self.reportdir + temp_file)
+            except OSError:
+                pass
+
+    def process_report(self):
+        self.load_dep_graphs()
 
         self.generate_graph(self.b_depgraph, 'build_time')
         self.generate_graph(self.r_depgraph, 'run_time')

@@ -113,13 +113,102 @@ class ISA_DEPChecker:
     def process_report(self):
         self.load_dep_graphs()
 
-        self.generate_graph(self.b_depgraph, 'build_time')
-        self.generate_graph(self.r_depgraph, 'run_time')
+        self._generate_graph(self.b_depgraph, 'build_time')
+        self._generate_graph(self.r_depgraph, 'run_time')
 
-    def generate_graph(self, dep_graph, deps_type):
-        report_path = self.reportdir + report_file + '_' + deps_type + '_' + self.timestamp + '.dot'
+    def generate_dot(self, digraph, vulnerable_packages, vuln_dependent_packages=set()):
+        """ Generate a digraph definition in the DOT language """
 
-        dot_graph = self.generate_dot(dep_graph)
+        def _edge(a, b=None, label=None):
+            """ Generate the DOT definition of a edge from `a` to `b`.
+            If only `a` is provided, a standalone node with no links will be added to the graph.
+            Vulnerable packages are red, while packages that depend on vuln. packages are yellow.
+            """
+            edge_template = '\t"{a}" -> "{b}" {opts};'
+            standalone_node_template = '\t"{node}" {opts};'  # node with no dependencies
+
+            if not b:
+                if a in vulnerable_packages:
+                    opts = ' [style=filled,fillcolor=red]'
+                elif a in vuln_dependent_packages:
+                    opts = ' [style=filled,fillcolor=yellow]'
+                else:
+                    opts = ''
+
+                return standalone_node_template.format(node=a, opts=opts)
+
+            opts = []
+            if b in vuln_dependent_packages or b in vulnerable_packages:
+                opts.append('color=red')
+            if label:
+                opts.append('label="' + label + '"')
+
+            return edge_template.format(
+                a=a, b=b,
+                opts='[' + ','.join(opts) + ']' if opts else ''
+            )
+
+        graph_template = textwrap.dedent('''\
+        digraph dependency_graph {{
+        \tranksep=3;
+        {edges}
+        }}
+        ''')
+
+        edges = []
+        for node in vuln_dependent_packages:
+            edges.append(_edge(node))
+        for node in vulnerable_packages:
+            edges.append(_edge(node))
+
+        for node, deps in digraph.iteritems():
+            for dep in deps:
+                edges.append(_edge(a=node, b=dep.pkg_name, label=dep.details))
+            if not deps:
+                edges.append(_edge(node))
+
+        return graph_template.format(edges='\n'.join(edges))
+
+    def invert_graph(self, depgraph):
+        """ Build the inverse dependency graph.
+        Dependencies details are not kept; only package names are considered.
+        """
+        inv_depgraph = {}
+        for pkg, deps in depgraph.iteritems():
+            for dep in deps:
+                node = inv_depgraph.setdefault(dep.pkg_name, list())
+                node.append(pkg)
+            if pkg not in inv_depgraph:
+                inv_depgraph[pkg] = []
+        return inv_depgraph
+
+    def get_dependent_pkgs(self, packages_name, depgraph):
+        """ Given a package, return a list of the packages that depend on it. """
+        if type(packages_name) not in (list, tuple):
+            packages_name = [packages_name]
+
+        dependent_packages = set()
+        visited = set()
+
+        inv_depgraph = self.invert_graph(depgraph)
+
+        def dfs(node):
+            visited.add(node)
+            dependent_packages.update(inv_depgraph[node])
+            for n in inv_depgraph[node]:
+                if n not in visited:
+                    dfs(n)
+
+        for pkg_name in packages_name:
+            dfs(pkg_name)
+
+        return dependent_packages
+
+    def _generate_graph(self, dep_graph, name, vulnerable_packages=tuple(), vuln_dependent_packages=set()):
+        """ Draw and save a dependency graph """
+        report_path = self.reportdir + report_file + '_' + name + '_' + self.timestamp + '.dot'
+
+        dot_graph = self.generate_dot(dep_graph, vulnerable_packages, vuln_dependent_packages)
         with open(report_path, 'w') as f:
             f.write(dot_graph)
 
@@ -137,29 +226,42 @@ class ISA_DEPChecker:
             with open(self.logdir + log, 'a') as flog:
                 flog.write('Graphviz is missing, the graphs will not be rendered.\n')
 
-    def generate_dot(self, digraph):
-        """ Generate a digraph definition in the DOT language """
-        graph_template = textwrap.dedent('''\
-        digraph dependency_graph {{
-        \tranksep=3;
-        {edges}
-        }}
-        ''')
-        edge_template = '\t"{a}" -> "{b}";'
+    def generate_complete_graph(self, dep_graph, vulnerable_packages, name):
+        """ Draw and save the full dependency graph """
+        vuln_dependent_packages = self.get_dependent_pkgs(vulnerable_packages, dep_graph)
 
-        edges = []
-        for node, deps in digraph.iteritems():
-            for dep in deps:
-                edges.append(edge_template.format(a=node, b=dep.pkg_name))
+        return self._generate_graph(dep_graph, name, vulnerable_packages, vuln_dependent_packages)
 
-        return graph_template.format(edges='\n'.join(edges))
+    def generate_vulnerability_graph(self, dep_graph, root_packages, vulnerable_packages, name):
+        """ Draw and save a partial dependency graph """
+        inv_depgraph = self.invert_graph(dep_graph)
+        partial_graph = {}
+
+        visited = set()
+
+        def dfs(node):
+            visited.add(node)
+            for n in inv_depgraph[node]:
+                partial_graph.setdefault(n, set()).add(Dependency(node, ''))
+
+                if n not in visited:
+                    dfs(n)
+
+        for pkg in root_packages:
+            dfs(pkg)
+
+        vuln_dependent_packages = self.get_dependent_pkgs(vulnerable_packages, dep_graph)
+
+        # todo: avoid tred-ing partial graphs?
+        return self._generate_graph(partial_graph, name, vulnerable_packages, vuln_dependent_packages)
 
 
 # ======== supported callbacks from ISA ============= #
 
+
 def init(ISA_config):
     global DEPChecker
-    DEPChecker = DEPChecker or ISA_DEPChecker(ISA_config)
+    DEPChecker = ISA_DEPChecker(ISA_config)
 
 
 def getPluginName():

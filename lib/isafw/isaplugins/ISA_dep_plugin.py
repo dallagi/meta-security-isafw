@@ -277,4 +277,16 @@ def process_report():
     global DEPChecker
     return DEPChecker.process_report()
 
+
+def vulnerability_graph(vuln_pkgs, name):
+    global DEPChecker
+    DEPChecker.load_dep_graphs()
+    DEPChecker.generate_complete_graph(DEPChecker.r_depgraph, vuln_pkgs, name)
+
+
+def vulnerability_graph_partial(root_pkgs, vuln_pkgs, name):
+    global DEPChecker
+    DEPChecker.load_dep_graphs()
+    DEPChecker.generate_vulnerability_graph(DEPChecker.r_depgraph, root_pkgs, vuln_pkgs, name)
+
 # ==================================================== #

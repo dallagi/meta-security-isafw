@@ -255,9 +255,14 @@ class ISA_DEPChecker:
         # todo: avoid tred-ing partial graphs?
         return self._generate_graph(partial_graph, name, vulnerable_packages, vuln_dependent_packages)
 
+    def cleanup(self):
+        try:  # remove temp file
+            os.remove(self.reportdir + temp_file)
+        except OSError:
+            pass
+
 
 # ======== supported callbacks from ISA ============= #
-
 
 def init(ISA_config):
     global DEPChecker
@@ -300,4 +305,10 @@ def buildtime_vulnerability_graph_partial(root_pkgs, vuln_pkgs, name):
     global DEPChecker
     DEPChecker.load_dep_graphs()
     DEPChecker.generate_vulnerability_graph(DEPChecker.b_depgraph, root_pkgs, vuln_pkgs, name)
+
+
+def cleanup():
+    global DEPChecker
+    DEPChecker.cleanup()
+
 # ==================================================== #

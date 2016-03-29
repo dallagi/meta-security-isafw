@@ -203,5 +203,24 @@ class ISA:
                 except:
                     print("Exception in plugin: ", sys.exc_info())
 
+    def cleanup(self):
+        for name in isaplugins.__all__:
+            plugin = getattr(isaplugins, name)
+            try:
+                # see if the plugin has a 'cleanup' attribute
+                cleanup = plugin.cleanup
+            except AttributeError:
+                # if it doesn't, it is ok, won't call this plugin
+                pass
+            else:
+                if self.ISA_config.plugin_whitelist and plugin.getPluginName() not in self.ISA_config.plugin_whitelist:
+                    continue
+                if self.ISA_config.plugin_blacklist and plugin.getPluginName() in self.ISA_config.plugin_blacklist:
+                    continue
+                try:
+                    cleanup()
+                except:
+                    print("Exception in plugin cleanup: ", sys.exc_info())
+
 
 
